@@ -171,9 +171,10 @@ local CFG = {
     -- Auto Parry (saat killer attack lo dekat, equip Parry Dagger)
     -- Parry window game = 800ms; cooldown 0.9s antara fire biar window cycle bersih
     autoParryEnabled  = false,
-    parryRange        = 6,      -- killer dist <= ini → fire RMB
+    parryRange        = 8,      -- killer dist <= ini → fire RMB (naikin dari 6 buat lunge attack)
     parryCooldown     = 0.9,    -- min jeda antara parry attempt
     parryTick         = 0.05,
+    parryDebug        = true,   -- print [PARRY] log ke console F9 buat debug
 
     -- KILLER FEATURES ────────────────────────────────────
     -- Auto-Attack M1 (saat survivor melee range + facing)
@@ -1554,29 +1555,52 @@ local function nearestKillerDist()
     return best
 end
 
+local function dbgParry(...)
+    if CFG.parryDebug then print("[PARRY]", ...) end
+end
+
+-- One-time diagnostic dump (run sekali saat first iteration) — confirm executor function availability
 task.spawn(function()
+    task.wait(2)
+    if CFG.parryDebug then
+        print("[PARRY-DIAG] mouse2click=", tostring(rawget(getfenv(), "mouse2click")),
+              "mouse2press=", tostring(rawget(getfenv(), "mouse2press")),
+              "VIM=", tostring(VIM))
+    end
+end)
+
+task.spawn(function()
+    local lastLogReason = ""
+    local function logReasonOnce(reason)
+        if reason ~= lastLogReason then
+            dbgParry("skip:", reason)
+            lastLogReason = reason
+        end
+    end
     while true do
         task.wait(CFG.parryTick)
         if not CFG.autoParryEnabled then continue end
 
         local c = LP.Character
-        if not c then continue end
-        -- Skip kalau lagi knocked/hooked/carried (parry useless saat itu)
-        if c:GetAttribute("Knocked") == true then continue end
-        if c:GetAttribute("IsHooked") == true then continue end
-        if c:GetAttribute("IsCarried") == true then continue end
-        -- Skip kalau Parry attribute udah true (window aktif, jangan double fire)
-        if c:GetAttribute("Parry") == true then continue end
-        -- Cooldown check
+        if not c then logReasonOnce("no character") continue end
+        if c:GetAttribute("Knocked")   == true then logReasonOnce("knocked")  continue end
+        if c:GetAttribute("IsHooked")  == true then logReasonOnce("hooked")   continue end
+        if c:GetAttribute("IsCarried") == true then logReasonOnce("carried")  continue end
+        if c:GetAttribute("Parry")     == true then logReasonOnce("parry-window-active") continue end
         local now = tick()
-        if now - lastParryFire < CFG.parryCooldown then continue end
-        -- Senjata equip check
-        if not hasParryWeapon() then continue end
-        -- Killer dalam range?
-        if nearestKillerDist() > CFG.parryRange then continue end
+        if now - lastParryFire < CFG.parryCooldown then continue end  -- silent skip, normal
+        if not hasParryWeapon() then logReasonOnce("no-parry-weapon-equipped") continue end
+        local kd = nearestKillerDist()
+        if kd > CFG.parryRange then
+            -- log dist saat killer dekat tapi belum dalam range (debug visibility)
+            if kd < 15 then dbgParry("killer dist=" .. string.format("%.1f", kd) .. " (range=" .. CFG.parryRange .. ")") end
+            continue
+        end
+        lastLogReason = ""
 
         -- FIRE RMB click — multi-fallback (Solara mouse2click > VIM > raw)
         lastParryFire = now
+        dbgParry("FIRE → killer dist=" .. string.format("%.1f", kd))
         local fired = false
         -- Method 1: Solara executor mouse2click (paling reliable buat game yang block VIM)
         local _m2c   = rawget(getfenv(), "mouse2click")
