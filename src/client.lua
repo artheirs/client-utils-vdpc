@@ -3429,6 +3429,9 @@ WTitleDiv.BorderSizePixel       = 0
 WTitleDiv.Parent                = WTitleBar
 
 -- ── Header brand — accent dot + gradient text + shimmer underline
+-- Wrap dalam do-block biar 12+ locals di sini ga makan register slot parent function
+-- (Luau limit 200 local registers per function)
+do
 -- Color palette: purple → cyan slide
 local BRAND_PURPLE = Color3.fromRGB(167, 139, 250)
 local BRAND_CYAN   = Color3.fromRGB(96, 165, 250)
@@ -3545,6 +3548,7 @@ task.spawn(function()
         t2:Play(); t2.Completed:Wait()
     end
 end)
+end  -- ◀ END header brand do-block (frees ~12 register slots)
 
 -- Window controls (close button kanan atas)
 local function makeWindowCtrl(text, posX, onClick)
