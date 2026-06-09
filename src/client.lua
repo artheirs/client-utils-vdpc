@@ -3743,6 +3743,9 @@ local function makeTabContent()
 end
 
 -- ── Build sidebar layout ────────────────────────────────────
+-- Wrap dalam do-block: _t,_t2,_t3,_t4 cuma kepake di loop ini → scope-isolate biar
+-- ga makan slot register parent chunk (Luau limit 200)
+do
 -- GAMEPLAY section
 makeSidebarLabel("GAMEPLAY", 16)
 local _t = {
@@ -3780,8 +3783,10 @@ for _, t in ipairs(sidebarItems) do
     item.MouseButton1Click:Connect(function() switchTab(t.name) end)
     tabs[t.name] = {Item=item, Content=content, SetActive=setActive, Heading=t.heading}
 end
+end  -- ◀ END sidebar build do-block (frees 5 register slots)
 
--- ── User widget at bottom of sidebar ───────────────────────
+-- ── User widget at bottom of sidebar — wrap juga (4 W* locals, closure-safe)
+do
 local WUser = Instance.new("Frame")
 WUser.Size             = UDim2.new(1, -20, 0, 46)
 WUser.Position         = UDim2.new(0, 10, 1, -58)
@@ -3821,11 +3826,12 @@ WUserRole.TextSize               = 9
 WUserRole.TextXAlignment         = Enum.TextXAlignment.Left
 WUserRole.Parent                 = WUser
 
--- Sync user widget role saat berubah
+-- Sync user widget role saat berubah (closure capture WUserRole as upvalue)
 LP:GetPropertyChangedSignal("Team"):Connect(function()
     task.wait(0.1)
     WUserRole.Text = "[" .. (CFG.roleOverride and CFG.manualRole or roleCache) .. "] Violence..."
 end)
+end  -- ◀ END user widget do-block (frees 4 register slots)
 
 -- ── Default active tab ─────────────────────────────────────
 switchTab("Survivor")
