@@ -171,8 +171,8 @@ local CFG = {
     -- Auto Parry (saat killer attack lo dekat, equip Parry Dagger)
     -- Parry window game = 800ms; cooldown 0.9s antara fire biar window cycle bersih
     autoParryEnabled  = false,
-    parryRange        = 8,      -- killer dist <= ini → fire RMB (naikin dari 6 buat lunge attack)
-    parryCooldown     = 0.9,    -- min jeda antara parry attempt
+    parryRange        = 8,      -- killer dist <= ini → fire RMB (lunge attack range)
+    parryCooldown     = 62,     -- game cd: 60s fail / 90s success → 62s safe minimum
     parryTick         = 0.05,
     parryDebug        = true,   -- print [PARRY] log ke console F9 buat debug
 
@@ -1523,16 +1523,14 @@ end)
 -- ============================================================
 local lastParryFire = 0
 
+-- VD: Parrying Dagger di-attach sebagai Model (bukan Tool class) via Motor6D
+-- ke character. Cari descendant apapun yg nama-nya match "parry".
 local function hasParryWeapon()
     local c = LP.Character
     if c then
-        for _, t in ipairs(c:GetChildren()) do
-            if t:IsA("Tool") and t.Name:lower():find("parry") then return true end
-        end
-    end
-    if LP.Backpack then
-        for _, t in ipairs(LP.Backpack:GetChildren()) do
-            if t:IsA("Tool") and t.Name:lower():find("parry") then return true end
+        for _, d in ipairs(c:GetDescendants()) do
+            local n = d.Name:lower()
+            if n:find("parry") then return true end  -- "Parry Dagger" or "Parrying Dagger"
         end
     end
     return false
