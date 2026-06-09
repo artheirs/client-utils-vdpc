@@ -1557,6 +1557,7 @@ end
 -- Fire parry HANYA saat killer baru mulai play animation (= attack swing),
 -- bukan cuma karena deket. Window parry game 0.8s, jadi timing harus tepat.
 local killerLastAnimTime = 0
+local killerDistHistory  = {}  -- {{t=tick, d=dist}, ...} buat velocity calc
 local function attachKillerAnimWatcher(p)
     if p == LP then return end
     local function attach(c)
@@ -1615,10 +1616,30 @@ task.spawn(function()
             if kd < 15 then dbgParry("killer dist=" .. string.format("%.1f", kd) .. " (range=" .. CFG.parryRange .. ")") end
             continue
         end
-        -- ATTACK DETECTION: fire HANYA pas killer baru mulai animation (= swing)
-        -- killerLastAnimTime di-update via AnimationPlayed listener di atas
-        if tick() - killerLastAnimTime > 0.3 then
-            dbgParry("killer in range (" .. string.format("%.1f", kd) .. ") tapi tidak swing — hold")
+        -- ATTACK DETECTION: combine 2 signal
+        --   Signal A: animation event dalam 0.15s (window ketat)
+        --   Signal B: killer approach velocity > 8 studs/sec (lunge bukan walk)
+        -- BOTH harus true biar fire (hindari false positive walk anim)
+        local nowT = tick()
+        local animFresh = (nowT - killerLastAnimTime) < 0.15
+        -- Velocity: track dist 0.15s ago
+        table.insert(killerDistHistory, {t=nowT, d=kd})
+        while #killerDistHistory > 0 and killerDistHistory[1].t < nowT - 0.5 do
+            table.remove(killerDistHistory, 1)
+        end
+        local closingSpeed = 0
+        if #killerDistHistory >= 3 then
+            local oldest = killerDistHistory[1]
+            local dt = nowT - oldest.t
+            if dt > 0.05 then
+                closingSpeed = (oldest.d - kd) / dt  -- positive = closing
+            end
+        end
+        local lungeFresh = closingSpeed > 8  -- lunge speed (walk biasa <4)
+        if not (animFresh and lungeFresh) then
+            dbgParry("dist=" .. string.format("%.1f", kd)
+                .. " anim=" .. tostring(animFresh)
+                .. " lunge=" .. string.format("%.1f", closingSpeed) .. "s/s — hold")
             continue
         end
         lastLogReason = ""
