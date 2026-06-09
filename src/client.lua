@@ -1484,11 +1484,24 @@ task.spawn(function()
             local now = tick()
             if now - lastUnhookClick >= UNHOOK_CLICK_INTERVAL then
                 lastUnhookClick = now
-                pcall(function()
-                    VIM:SendMouseButtonEvent(0, 0, 0, true,  game, 0)  -- LMB down
-                    task.wait(0.05)
-                    VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0)  -- LMB up
-                end)
+                local fired = false
+                local _m1c = rawget(getfenv(), "mouse1click")
+                local _m1p = rawget(getfenv(), "mouse1press")
+                local _m1r = rawget(getfenv(), "mouse1release")
+                if _m1c then
+                    pcall(_m1c)
+                    fired = true
+                elseif _m1p and _m1r then
+                    pcall(_m1p); task.wait(0.05); pcall(_m1r)
+                    fired = true
+                end
+                if not fired then
+                    pcall(function()
+                        VIM:SendMouseButtonEvent(0, 0, 0, true,  game, 0)
+                        task.wait(0.05)
+                        VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+                    end)
+                end
             end
         else
             -- Bukan ke-hook, pastikan release mouse kalau nyangkut
@@ -1562,13 +1575,30 @@ task.spawn(function()
         -- Killer dalam range?
         if nearestKillerDist() > CFG.parryRange then continue end
 
-        -- FIRE RMB click
+        -- FIRE RMB click — multi-fallback (Solara mouse2click > VIM > raw)
         lastParryFire = now
-        pcall(function()
-            VIM:SendMouseButtonEvent(0, 0, 1, true,  game, 0)  -- RMB down (button=1)
+        local fired = false
+        -- Method 1: Solara executor mouse2click (paling reliable buat game yang block VIM)
+        local _m2c   = rawget(getfenv(), "mouse2click")
+        local _m2p   = rawget(getfenv(), "mouse2press")
+        local _m2r   = rawget(getfenv(), "mouse2release")
+        if _m2c then
+            pcall(_m2c)
+            fired = true
+        elseif _m2p and _m2r then
+            pcall(_m2p)
             task.wait(0.04)
-            VIM:SendMouseButtonEvent(0, 0, 1, false, game, 0)  -- RMB up
-        end)
+            pcall(_m2r)
+            fired = true
+        end
+        -- Method 2: VirtualInputManager (fallback)
+        if not fired then
+            pcall(function()
+                VIM:SendMouseButtonEvent(0, 0, 1, true,  game, 0)
+                task.wait(0.04)
+                VIM:SendMouseButtonEvent(0, 0, 1, false, game, 0)
+            end)
+        end
     end
 end)
 
@@ -3398,29 +3428,123 @@ WTitleDiv.BackgroundTransparency= 0.5
 WTitleDiv.BorderSizePixel       = 0
 WTitleDiv.Parent                = WTitleBar
 
+-- ── Header brand — accent dot + gradient text + shimmer underline
+-- Color palette: purple → cyan slide
+local BRAND_PURPLE = Color3.fromRGB(167, 139, 250)
+local BRAND_CYAN   = Color3.fromRGB(96, 165, 250)
+
+-- Accent dot (pulse animation)
+local WAccent = Instance.new("Frame")
+WAccent.Size              = UDim2.new(0, 8, 0, 8)
+WAccent.Position          = UDim2.new(0, 18, 0, 15)
+WAccent.BackgroundColor3  = BRAND_PURPLE
+WAccent.BorderSizePixel   = 0
+WAccent.Parent            = WTitleBar
+local accCorner = Instance.new("UICorner")
+accCorner.CornerRadius    = UDim.new(1, 0)
+accCorner.Parent          = WAccent
+-- Soft glow ring around dot
+local accGlow = Instance.new("Frame")
+accGlow.Size              = UDim2.new(0, 14, 0, 14)
+accGlow.Position          = UDim2.new(0, -3, 0, -3)
+accGlow.BackgroundColor3  = BRAND_PURPLE
+accGlow.BackgroundTransparency = 0.7
+accGlow.BorderSizePixel   = 0
+accGlow.ZIndex            = 0
+accGlow.Parent            = WAccent
+local glowCorner = Instance.new("UICorner")
+glowCorner.CornerRadius   = UDim.new(1, 0)
+glowCorner.Parent         = accGlow
+
+-- Brand text with horizontal purple→cyan gradient
 local WBrand = Instance.new("TextLabel")
 WBrand.Size                   = UDim2.new(0, 200, 0, 18)
-WBrand.Position               = UDim2.new(0, 18, 0, 9)
+WBrand.Position               = UDim2.new(0, 34, 0, 9)
 WBrand.BackgroundTransparency = 1
 WBrand.Text                   = "Artheirs"
-WBrand.TextColor3             = T.textPri
+WBrand.TextColor3             = Color3.fromRGB(255, 255, 255)
 WBrand.Font                   = Enum.Font.GothamBold
-WBrand.TextSize               = 15
+WBrand.TextSize               = 16
 WBrand.TextXAlignment         = Enum.TextXAlignment.Left
 WBrand.TextYAlignment         = Enum.TextYAlignment.Center
 WBrand.Parent                 = WTitleBar
+local brandGradient = Instance.new("UIGradient")
+brandGradient.Color           = ColorSequence.new({
+    ColorSequenceKeypoint.new(0,    BRAND_PURPLE),
+    ColorSequenceKeypoint.new(0.5,  Color3.fromRGB(232, 222, 255)),
+    ColorSequenceKeypoint.new(1,    BRAND_CYAN),
+})
+brandGradient.Parent          = WBrand
 
+-- Subtitle
 local WSub = Instance.new("TextLabel")
 WSub.Size                   = UDim2.new(0, 200, 0, 14)
-WSub.Position               = UDim2.new(0, 18, 0, 27)
+WSub.Position               = UDim2.new(0, 34, 0, 28)
 WSub.BackgroundTransparency = 1
 WSub.Text                   = "Violence District"
 WSub.TextColor3             = T.textSec
 WSub.Font                   = Enum.Font.Gotham
-WSub.TextSize               = 11
+WSub.TextSize               = 10
 WSub.TextXAlignment         = Enum.TextXAlignment.Left
 WSub.TextYAlignment         = Enum.TextYAlignment.Center
 WSub.Parent                 = WTitleBar
+
+-- Shimmer underline — gradient slide L→R infinite loop
+local WUnderline = Instance.new("Frame")
+WUnderline.Size                  = UDim2.new(0, 70, 0, 2)
+WUnderline.Position              = UDim2.new(0, 34, 0, 44)
+WUnderline.BackgroundColor3      = Color3.fromRGB(255, 255, 255)
+WUnderline.BorderSizePixel       = 0
+WUnderline.Parent                = WTitleBar
+local underCorner = Instance.new("UICorner")
+underCorner.CornerRadius         = UDim.new(1, 0)
+underCorner.Parent               = WUnderline
+local underGradient = Instance.new("UIGradient")
+underGradient.Color              = ColorSequence.new({
+    ColorSequenceKeypoint.new(0,    BRAND_PURPLE),
+    ColorSequenceKeypoint.new(0.5,  BRAND_CYAN),
+    ColorSequenceKeypoint.new(1,    BRAND_PURPLE),
+})
+underGradient.Transparency       = NumberSequence.new({
+    NumberSequenceKeypoint.new(0,    1),
+    NumberSequenceKeypoint.new(0.25, 0.2),
+    NumberSequenceKeypoint.new(0.75, 0.2),
+    NumberSequenceKeypoint.new(1,    1),
+})
+underGradient.Parent             = WUnderline
+
+-- Animate shimmer offset L→R repeat
+task.spawn(function()
+    while WUnderline.Parent do
+        underGradient.Offset = Vector2.new(-1, 0)
+        local t = TweenService:Create(
+            underGradient,
+            TweenInfo.new(2.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+            {Offset = Vector2.new(1, 0)}
+        )
+        t:Play()
+        t.Completed:Wait()
+        task.wait(0.4)
+    end
+end)
+
+-- Animate accent dot pulse (transparency + scale via glow)
+task.spawn(function()
+    while WAccent.Parent do
+        local t1 = TweenService:Create(
+            accGlow,
+            TweenInfo.new(1.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+            {BackgroundTransparency = 0.4, Size = UDim2.new(0, 18, 0, 18), Position = UDim2.new(0, -5, 0, -5)}
+        )
+        t1:Play(); t1.Completed:Wait()
+        local t2 = TweenService:Create(
+            accGlow,
+            TweenInfo.new(1.4, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+            {BackgroundTransparency = 0.85, Size = UDim2.new(0, 14, 0, 14), Position = UDim2.new(0, -3, 0, -3)}
+        )
+        t2:Play(); t2.Completed:Wait()
+    end
+end)
 
 -- Window controls (close button kanan atas)
 local function makeWindowCtrl(text, posX, onClick)
@@ -3974,7 +4098,6 @@ do
     local _, u = makeCheckboxFor(mTab, 38, "God Mode (infinite health)", "godModeEnabled",
         function()
             CFG.godModeEnabled = not CFG.godModeEnabled
-            -- Re-bind supaya MaxHealth langsung di-apply
             local char = LP.Character
             if char then
                 local hum = char:FindFirstChild("Humanoid")
@@ -3982,7 +4105,23 @@ do
                     if CFG.godModeEnabled then
                         pcall(function() hum.MaxHealth = 1e9; hum.Health = hum.MaxHealth end)
                     else
-                        pcall(function() hum.MaxHealth = 100; hum.Health = math.min(hum.Health, 100) end)
+                        -- Aggressive reset: disconnect listener + force MaxHealth restore
+                        if gmConn then pcall(function() gmConn:Disconnect() end); gmConn = nil end
+                        pcall(function()
+                            hum.MaxHealth = 100
+                            hum.Health    = math.min(hum.Health, 100)
+                        end)
+                        -- Force-release semua mouse button kalau nyangkut dari interaksi godmode
+                        pcall(function()
+                            VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0)  -- LMB up
+                            VIM:SendMouseButtonEvent(0, 0, 1, false, game, 0)  -- RMB up
+                        end)
+                        if rawget(getfenv(), "mouse1release") then pcall(mouse1release) end
+                        if rawget(getfenv(), "mouse2release") then pcall(mouse2release) end
+                        arHolding = false
+                        -- Re-bind listener tapi state godmode off (siap kalau toggle on lagi)
+                        task.wait(0.1)
+                        bindGodMode()
                     end
                 end
             end
