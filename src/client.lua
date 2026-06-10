@@ -182,13 +182,11 @@ local CFG = {
     -- Game parry window = 800ms; game cooldown 60s fail / 90s success
     -- HYBRID detection: pre-emptive (close+facing) + reactive (anim-event backup)
     autoParryEnabled       = false,
-    parryRange             = 9,     -- max range buat reactive trigger
-    parryPreemptiveRange   = 6.5,   -- close range = pre-emptive fire (killer prep swing)
+    parryRange             = 6.5,   -- TIGHT: hanya fire kalau killer in actual swing reach (~7 studs)
     parryCooldown          = 62,    -- game cd: 60s fail / 90s success
     parryTick              = 0.04,
-    parryFacingDot         = 0.5,   -- reactive: cone ~60°
-    parryFacingDotPreempt  = 0.65,  -- preemptive: cone tighter ~50° (more confident)
-    parryAnimWindow        = 0.2,   -- anim event window
+    parryFacingDot         = 0.6,   -- killer facing me >0.6 (cone ~53°, lebih confident)
+    parryAnimWindow        = 0.25,  -- anim event window (sedikit lebih lebar buat catch wind-up)
     parryDebug             = true,
 
     -- KILLER FEATURES ────────────────────────────────────
@@ -1589,17 +1587,25 @@ end
 -- Fire parry HANYA saat killer baru mulai play animation (= attack swing),
 -- bukan cuma karena deket. Window parry game 0.8s, jadi timing harus tepat.
 local killerLastAnimTime = 0
-local killerDistHistory  = {}  -- {{t=tick, d=dist}, ...} buat velocity calc
+local killerDistHistory  = {}  -- legacy (unused, kept buat scope safety)
+-- Filter ANIM PRIORITY: walk/idle anims fire AnimationPlayed terus-menerus.
+-- Cuma Action / Action4 priority = special action (swing, attack, ability) yang relevan buat parry trigger.
 local function attachKillerAnimWatcher(p)
     if p == LP then return end
     local function attach(c)
         local hum = c:WaitForChild("Humanoid", 5)
         if not hum then return end
-        hum.AnimationPlayed:Connect(function()
+        hum.AnimationPlayed:Connect(function(track)
             local team = p.Team and p.Team.Name or ""
-            if team:lower():find("killer") then
-                killerLastAnimTime = tick()
+            if not team:lower():find("killer") then return end
+            -- Filter priority — drop Movement/Idle, keep Action/Action4/Action2/Action3
+            local prio = track and track.Priority
+            if prio == Enum.AnimationPriority.Idle
+            or prio == Enum.AnimationPriority.Movement
+            or prio == Enum.AnimationPriority.Core then
+                return  -- skip non-attack anims
             end
+            killerLastAnimTime = tick()
         end)
     end
     if p.Character then attach(p.Character) end
