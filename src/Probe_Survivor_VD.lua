@@ -313,8 +313,9 @@ do
     local UIS = game:GetService("UserInputService")
     UIS.InputBegan:Connect(function(input, gpe)
         if gpe then return end
-        -- F9 = save log (alternative ke /probe save kalo akun gak bisa chat)
-        if input.KeyCode == Enum.KeyCode.F9 then
+        -- F10 = save log (alternative ke /probe save kalo akun gak bisa chat)
+        -- F9 dihindari karena conflict dengan Roblox dev console default key.
+        if input.KeyCode == Enum.KeyCode.F10 then
             local content = table.concat(LOG, "\n")
             local saved = false
             if writefile then
