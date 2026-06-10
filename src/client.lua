@@ -1629,17 +1629,26 @@ local function attachKillerAnimWatcher(p)
                 killerLastAnimTime = tick()
                 return
             end
-            -- LAYER 2: FALLBACK heuristic — Action priority + length 1.0-3.5s
-            -- (signature attack swing anim untuk killer yang belum di-probe).
+            -- LAYER 2: PROXIMITY FALLBACK — Action priority + killer CLOSE (≤ 6 studs).
+            -- Killer di close range + Action anim = swing (universal pattern semua killer).
+            -- Far-range Action = chase/movement → skip (false positive prevention).
             local prio = track.Priority
-            local len  = track.Length or 0
             local isActionPrio = (prio == Enum.AnimationPriority.Action
                               or prio == Enum.AnimationPriority.Action2
                               or prio == Enum.AnimationPriority.Action3
                               or prio == Enum.AnimationPriority.Action4)
-            if isActionPrio and len >= 1.0 and len <= 3.5 then
-                killerLastAnimTime = tick()
-            end
+            if not isActionPrio then return end
+            -- Compute killer-to-player distance AT MOMENT anim fired
+            local myChar = LP.Character
+            local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            local pRoot = c and c:FindFirstChild("HumanoidRootPart")
+            if not (myHRP and pRoot) then return end
+            local d = (myHRP.Position - pRoot.Position).Magnitude
+            if d > 6 then return end  -- far-range Action = chase/run, skip
+            -- Drop excessive-length anims (>4s) — likely special ability, bukan LMB swing
+            local len = track.Length or 0
+            if len > 4 then return end
+            killerLastAnimTime = tick()
         end)
     end
     if p.Character then attach(p.Character) end
@@ -1710,9 +1719,10 @@ task.spawn(function()
         -- Killer velocity (flat, abaikan jatuh/lompat)
         local kvel = killerHRP.AssemblyLinearVelocity
         local kspeedFlat = math.sqrt(kvel.X * kvel.X + kvel.Z * kvel.Z)
-        local stopDetect = (kspeedFlat < 3) and (kd <= 5.5) and (facingDot > 0.7)
+        -- STOP-detect dropped — too many false positives (killer camping/idle).
+        -- Rely on REACT only (anim whitelist + Action priority fallback) for known killers.
         local animDetect = animFresh and (facingDot > CFG.parryFacingDot)
-        local fireMode = stopDetect and "STOP" or (animDetect and "ANIM" or nil)
+        local fireMode = animDetect and "REACT" or nil
         if not fireMode then
             dbgParry("dist=" .. string.format("%.1f", kd)
                 .. " spd=" .. string.format("%.1f", kspeedFlat)
