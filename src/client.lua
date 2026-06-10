@@ -1660,36 +1660,34 @@ task.spawn(function()
         end
         lastLogReason = ""
 
-        -- FIRE RMB HOLD — multi-fallback (Solara press/release > VIM hold)
-        -- HOLD selama parryHoldDuration biar cover swing→impact (parry window 800ms)
+        -- FIRE RMB CLICK (instant, bukan hold — game treat parry sbg single-shot reactive action)
+        -- Previous session evidence: click DID trigger parry. Hold malah breakin input.
         lastParryFire = now
-        dbgParry("FIRE HOLD " .. string.format("%.0f", CFG.parryHoldDuration * 1000) .. "ms → kd="
-            .. string.format("%.1f", kd) .. " face=" .. string.format("%.2f", facingDot))
+        dbgParry("FIRE CLICK → kd=" .. string.format("%.1f", kd)
+            .. " face=" .. string.format("%.2f", facingDot))
         local _m2c   = rawget(getfenv(), "mouse2click")
         local _m2p   = rawget(getfenv(), "mouse2press")
         local _m2r   = rawget(getfenv(), "mouse2release")
-        local heldVia = nil
-        -- Method 1: Solara press/release (paling reliable buat hold)
-        if _m2p and _m2r then
+        local fired = false
+        -- Method 1: Solara mouse2click (atomic press-release, paling reliable)
+        if _m2c then
+            pcall(_m2c)
+            fired = true
+        elseif _m2p and _m2r then
+            -- Method 1b: press + tiny gap + release biar register sebagai click bukan hold
             pcall(_m2p)
-            heldVia = "solara-press"
+            task.wait(0.03)
+            pcall(_m2r)
+            fired = true
         end
-        -- Method 2: VIM hold (fallback kalau press/release ga ada)
-        if not heldVia then
-            pcall(function() VIM:SendMouseButtonEvent(0, 0, 1, true, game, 0) end)
-            heldVia = "vim-hold"
+        -- Method 2: VirtualInputManager fallback
+        if not fired then
+            pcall(function()
+                VIM:SendMouseButtonEvent(0, 0, 1, true,  game, 0)
+                task.wait(0.03)
+                VIM:SendMouseButtonEvent(0, 0, 1, false, game, 0)
+            end)
         end
-        -- Spawn async release biar loop tetep bisa monitor
-        task.spawn(function()
-            task.wait(CFG.parryHoldDuration)
-            if heldVia == "solara-press" and _m2r then
-                pcall(_m2r)
-            else
-                pcall(function() VIM:SendMouseButtonEvent(0, 0, 1, false, game, 0) end)
-            end
-            -- Backup click via Solara mouse2click kalau press/release ga jalan
-            if heldVia == "vim-hold" and _m2c then pcall(_m2c) end
-        end)
     end
 end)
 
@@ -2341,21 +2339,31 @@ do
     local function applyStreamproof()
         local parented = false
         if CFG.streamproofEnabled then
-            -- 1) gethui() — Solara/most executors, container Roblox WDA_EXCLUDEFROMCAPTURE
-            if typeof(gethui) == "function" then
+            -- 1) get_hidden_gui() — Solara TRUE streamproof container (WDA_EXCLUDEFROMCAPTURE)
+            -- Inilah yang bikin GUI invisible di Medal/OBS/ShadowPlay capture.
+            local _ghg = rawget(getfenv(), "get_hidden_gui")
+            if typeof(_ghg) == "function" then
+                local ok, hgui = pcall(_ghg)
+                if ok and hgui then
+                    local ok2 = pcall(function() SG.Parent = hgui end)
+                    if ok2 and SG.Parent == hgui then parented = true end
+                end
+            end
+            -- 2) gethui() — fallback container (protected dari GetChildren, mungkin streamproof)
+            if not parented and typeof(gethui) == "function" then
                 local ok, hui = pcall(gethui)
                 if ok and hui then
                     local ok2 = pcall(function() SG.Parent = hui end)
                     if ok2 and SG.Parent == hui then parented = true end
                 end
             end
-            -- 2) syn.protect_gui — Synapse-style fallback
+            -- 3) syn.protect_gui — Synapse-style fallback
             if not parented and syn and typeof(syn.protect_gui) == "function" then
                 pcall(function() syn.protect_gui(SG) end)
                 pcall(function() SG.Parent = game:GetService("CoreGui") end)
                 if SG.Parent and SG.Parent:IsA("CoreGui") then parented = true end
             end
-            -- 3) protect_gui global (beberapa executor)
+            -- 4) protect_gui global (beberapa executor)
             if not parented and typeof(protect_gui) == "function" then
                 pcall(function() protect_gui(SG) end)
                 pcall(function() SG.Parent = game:GetService("CoreGui") end)
