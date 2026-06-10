@@ -1093,11 +1093,27 @@ do
                     if not frame.Visible then return end
                     if not CFG.noSkillCheckEnabled then return end
                     if getRole() ~= "Survivor" then return end
+                    -- Suppress jump physics biar Space ga lift off gen interaction
+                    -- (game baca Space via InputBegan signal, jump pakai JumpPower)
+                    local char = LP.Character
+                    local hum  = char and char:FindFirstChildOfClass("Humanoid")
+                    local savedJP, savedJH
+                    if hum then
+                        savedJP = hum.JumpPower
+                        savedJH = hum.JumpHeight
+                        pcall(function() hum.JumpPower = 0 end)
+                        pcall(function() hum.JumpHeight = 0 end)
+                    end
                     pcall(function()
                         VIM:SendKeyEvent(true,  Enum.KeyCode.Space, false, game)
                         task.wait(0.04)
                         VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
                     end)
+                    if hum then
+                        task.wait(0.1)  -- biar jump request settled
+                        pcall(function() hum.JumpPower  = savedJP end)
+                        pcall(function() hum.JumpHeight = savedJH end)
+                    end
                 end)
             end)
         end)
