@@ -1913,10 +1913,22 @@ task.spawn(function()
         if target then
             -- Random jitter buat hindari pattern detection
             task.wait(math.random(30, 90) / 1000)
-            rawRelease(); task.wait(0.04); rawPress()
-            task.wait(0.18)
-            rawRelease()
-            lastAttack = now
+            -- Re-validate target masih valid setelah jitter (mungkin udah pindah/down/hooked)
+            local rNow = getCharRoot(target)
+            local cNow = target.Character
+            local humNow = cNow and cNow:FindFirstChildOfClass("Humanoid")
+            local stillValid = rNow and humNow and humNow.Health > 0
+                and (not _H.isPlayerDowned or not _H.isPlayerDowned(target))
+                and (not _H.isPlayerHooked or not _H.isPlayerHooked(target))
+            if stillValid then
+                local dNow = (rNow.Position - myRoot.Position).Magnitude
+                if dNow <= CFG.autoAttackRange and isFacing(myRoot, rNow.Position, CFG.autoAttackFOV) then
+                    rawRelease(); task.wait(0.04); rawPress()
+                    task.wait(0.18)
+                    rawRelease()
+                    lastAttack = now
+                end
+            end
         end
     end
 end)
@@ -1953,7 +1965,16 @@ task.spawn(function()
         if target then
             -- TP dekati kalau jauh
             if bestDist > CFG.pickupRange then
-                myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 2)
+                -- Pakai world-space offset (downed survivor HRP miring → local offset bisa
+                -- floating/underground). Approach dari sisi LP, facing target.
+                local approach = myRoot.Position - targetRoot.Position
+                local approachFlat = Vector3.new(approach.X, 0, approach.Z)
+                if approachFlat.Magnitude < 0.1 then
+                    approachFlat = Vector3.new(0, 0, 2)
+                end
+                local tpPos = targetRoot.Position + approachFlat.Unit * 2 + Vector3.new(0, 1, 0)
+                local look  = Vector3.new(targetRoot.Position.X, tpPos.Y, targetRoot.Position.Z)
+                myRoot.CFrame = CFrame.new(tpPos, look)
                 task.wait(0.2)
             end
             -- Pickup di Violence District = hold SPACE
@@ -2015,8 +2036,16 @@ task.spawn(function()
         end
 
         if bestHook then
-            -- TP ke depan hook
-            myRoot.CFrame = CFrame.new(bestHook.Position + Vector3.new(0, 2, 0), bestHook.Position)
+            -- TP berdiri di samping hook (approach dari sisi LP), facing hook.
+            -- Sebelumnya TP ke +2 Y dengan lookAt ke hook → karakter floating + nunduk.
+            local approach = myRoot.Position - bestHook.Position
+            local approachFlat = Vector3.new(approach.X, 0, approach.Z)
+            if approachFlat.Magnitude < 0.1 then
+                approachFlat = Vector3.new(0, 0, 2)
+            end
+            local standPos = bestHook.Position + approachFlat.Unit * 2 + Vector3.new(0, 1.5, 0)
+            local look     = Vector3.new(bestHook.Position.X, standPos.Y, bestHook.Position.Z)
+            myRoot.CFrame  = CFrame.new(standPos, look)
             task.wait(0.25)
             -- Hook di Violence District = hold SPACE
             holdSpace(1.4)
@@ -2032,6 +2061,7 @@ local function antiStunActive()
     return CFG.antiPalletStunEnabled
         or CFG.antiVaultStunEnabled
         or CFG.antiShootStunEnabled
+        or CFG.antiFlashlightEnabled
 end
 
 local stunConns = {}
@@ -2047,12 +2077,15 @@ end
 local function fixStunState(hum)
     if not hum then return end
     local char = hum.Parent
-    -- VD-specific: reset IsStunned attribute kalau ke-set
+    -- VD-specific: reset IsStunned attribute kalau ke-set (pallet/flash/shoot signature)
     if char and (CFG.antiPalletStunEnabled or CFG.antiFlashlightEnabled or CFG.antiShootStunEnabled) then
         if char:GetAttribute("IsStunned") == true then
             pcall(function() char:SetAttribute("IsStunned", false) end)
         end
-        -- Destroy BodyVelocity yang nyangkut di HRP
+    end
+    -- Destroy body movers kalau anti-stun apa pun aktif — vault knockback juga inject
+    -- BodyVelocity di HRP, jadi gate-nya pakai antiStunActive() bukan subset pallet/flash/shoot.
+    if char and antiStunActive() then
         local hrp = char:FindFirstChild("HumanoidRootPart")
         if hrp then
             for _, d in ipairs(hrp:GetChildren()) do
@@ -2095,6 +2128,14 @@ local function removeStunBodyMovers(char)
     end
 end
 
+-- ── Stun window: aktif 2s pasca-deteksi stun signal.
+-- Heartbeat loop di bawah override walkspeed/attribute/body movers selama window
+-- aktif → counter server replication yang re-apply stun state per tick (~30Hz).
+local stunWindowUntil = 0
+local function openStunWindow()
+    stunWindowUntil = tick() + 2.0
+end
+
 local function attachAntiStun(char)
     clearStunConns()
     if not char then return end
@@ -2108,6 +2149,7 @@ local function attachAntiStun(char)
         if getRole() ~= "Killer" then return end
         if not (CFG.antiPalletStunEnabled or CFG.antiFlashlightEnabled or CFG.antiShootStunEnabled) then return end
         if char:GetAttribute("IsStunned") == true then
+            openStunWindow()  -- buka window override 2s
             pcall(function() char:SetAttribute("IsStunned", false) end)
             removeStunBodyMovers(char)
             pcall(function() hum.WalkSpeed = targetWalkSpeed() end)
@@ -2139,7 +2181,15 @@ local function attachAntiStun(char)
         -- Vault anim — track flag selama anim play, cancel kalau anti-vault on
         if VAULT_ANIM_IDS[id] then
             vaultActive = true
-            track.Stopped:Connect(function() vaultActive = false end)
+            -- Capture connection biar bisa disconnect on Stopped → no listener leak
+            local stoppedConn
+            stoppedConn = track.Stopped:Connect(function()
+                vaultActive = false
+                if stoppedConn then
+                    pcall(function() stoppedConn:Disconnect() end)
+                    stoppedConn = nil
+                end
+            end)
             if CFG.antiVaultStunEnabled then
                 pcall(function() track:Stop(0) end)
                 if char:GetAttribute("Immobile") == true then
@@ -2173,6 +2223,36 @@ end
 
 LP.CharacterAdded:Connect(function(c) task.wait(0.2); attachAntiStun(c) end)
 if LP.Character then attachAntiStun(LP.Character) end
+
+-- ── Heartbeat override aktif selama stun window (2s pasca-deteksi).
+-- Frequency 60Hz biar lebih cepat dari server replication tick (~30Hz):
+-- server set IsStunned=true / WalkSpeed=0 / inject BodyVelocity → frame berikutnya kita reset.
+-- Loop idle (early return) saat di luar window → ga ada CPU cost saat ga stun.
+RunService.Heartbeat:Connect(function()
+    if tick() >= stunWindowUntil then return end
+    if not antiStunActive() then return end
+    if getRole() ~= "Killer" then return end
+    local c = LP.Character
+    if not c then return end
+    local h = c:FindFirstChildOfClass("Humanoid")
+    if not h then return end
+    if c:GetAttribute("IsStunned") == true then
+        pcall(function() c:SetAttribute("IsStunned", false) end)
+    end
+    if h.WalkSpeed > 0 and h.WalkSpeed < 12 then
+        pcall(function() h.WalkSpeed = targetWalkSpeed() end)
+    end
+    removeStunBodyMovers(c)
+    -- Kill stun anims yang re-play
+    local animator = c:FindFirstChildOfClass("Animator")
+    if animator then
+        for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+            if track.Animation and STUN_ANIM_IDS[track.Animation.AnimationId] then
+                pcall(function() track:Stop(0) end)
+            end
+        end
+    end
+end)
 
 -- Backup polling tiap 0.05s — jaga-jaga signal ke-bypass
 task.spawn(function()
