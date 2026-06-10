@@ -1623,31 +1623,26 @@ local function attachKillerAnimWatcher(p)
             if not team:lower():find("killer") then return end
             local anim = track and track.Animation
             if not anim then return end
-            local id = (anim.AnimationId or ""):match("(%d+)")
-            -- LAYER 1: WHITELIST match (high confidence, dari probe)
-            if id and CFG.parryWindupAnimIds[id] then
-                killerLastAnimTime = tick()
-                return
-            end
-            -- LAYER 2: PROXIMITY FALLBACK — Action priority + killer CLOSE (≤ 6 studs).
-            -- Killer di close range + Action anim = swing (universal pattern semua killer).
-            -- Far-range Action = chase/movement → skip (false positive prevention).
+            -- UNIVERSAL LMB DETECTOR — bypass whitelist (anim ID beda per killer character,
+            -- gak realistic probe semua). Pakai signature universal: Action priority + CLOSE range.
+            --   - LMB hit semua killer = fire Action priority anim DI close range (~3-5 studs)
+            --   - Ranged special (Veil spear) = anim fires at FAR range → filtered out
+            --   - Movement/chase anim = Movement/Core priority → filtered out
+            --   - Long ability anims (>5s) = filtered out
             local prio = track.Priority
             local isActionPrio = (prio == Enum.AnimationPriority.Action
                               or prio == Enum.AnimationPriority.Action2
                               or prio == Enum.AnimationPriority.Action3
                               or prio == Enum.AnimationPriority.Action4)
             if not isActionPrio then return end
-            -- Compute killer-to-player distance AT MOMENT anim fired
             local myChar = LP.Character
             local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
             local pRoot = c and c:FindFirstChild("HumanoidRootPart")
             if not (myHRP and pRoot) then return end
             local d = (myHRP.Position - pRoot.Position).Magnitude
-            if d > 6 then return end  -- far-range Action = chase/run, skip
-            -- Drop excessive-length anims (>4s) — likely special ability, bukan LMB swing
+            if d > 5 then return end  -- TIGHT: only count anims at CLOSE swing range
             local len = track.Length or 0
-            if len > 4 then return end
+            if len > 5 then return end  -- drop very long anims (likely special ability)
             killerLastAnimTime = tick()
         end)
     end
@@ -1719,10 +1714,13 @@ task.spawn(function()
         -- Killer velocity (flat, abaikan jatuh/lompat)
         local kvel = killerHRP.AssemblyLinearVelocity
         local kspeedFlat = math.sqrt(kvel.X * kvel.X + kvel.Z * kvel.Z)
-        -- STOP-detect dropped — too many false positives (killer camping/idle).
-        -- Rely on REACT only (anim whitelist + Action priority fallback) for known killers.
+        -- UNIVERSAL LMB PARRY trigger:
+        -- Anim watcher udah filter: Action priority + killer kd ≤ 5 at anim event time.
+        -- Loop ini cek: anim fresh + facing → fire (universal across semua killer).
+        -- DASH-detect tetep ada buat Abysswalker dash-slash yang anim event fires late.
+        local dashDetect = (kspeedFlat > 8) and (kd <= 5) and (facingDot > 0.85)
         local animDetect = animFresh and (facingDot > CFG.parryFacingDot)
-        local fireMode = animDetect and "REACT" or nil
+        local fireMode = animDetect and "REACT" or (dashDetect and "DASH" or nil)
         if not fireMode then
             dbgParry("dist=" .. string.format("%.1f", kd)
                 .. " spd=" .. string.format("%.1f", kspeedFlat)
