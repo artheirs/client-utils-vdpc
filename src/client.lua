@@ -1220,9 +1220,21 @@ function _H.getPalletParts()
     _palletLastScan = now
     _palletCache    = {}
     for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and obj.Name:lower():find("pallet") then
-            local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-            if part then table.insert(_palletCache, part) end
+        if obj:IsA("Model") then
+            -- STRICT match: exact "Pallet" / "Palletwrong" (VD canonical names),
+            -- BUKAN substring (sebelumnya catch truck/vehicle dengan "Pallet" anywhere in name).
+            local n = obj.Name:lower()
+            if n == "pallet" or n == "palletwrong" then
+                -- VALIDATE struktur VD: must have Primary1/Primary2/PrimaryPartPallet child.
+                -- Tanpa validation, model "Pallet" generic dari decoration map ke-include juga.
+                local part = obj:FindFirstChild("PrimaryPartPallet")
+                          or obj:FindFirstChild("Primary1")
+                          or obj:FindFirstChild("Primary2")
+                          or obj.PrimaryPart
+                if part and part:IsA("BasePart") then
+                    table.insert(_palletCache, part)
+                end
+            end
         end
     end
     return _palletCache
@@ -1636,11 +1648,9 @@ task.spawn(function()
             if kd < 15 then dbgParry("killer dist=" .. string.format("%.1f", kd) .. " (range=" .. CFG.parryRange .. ")") end
             continue
         end
-        -- HYBRID DETECTION (game cd 60-90s, harus tepat di 1 fire):
-        --   TIER 1 PREEMPTIVE: killer ≤ 6.5 studs + facing tight (>0.65)
-        --                      → fire SEBELUM swing impact, parry window terbuka duluan
-        --   TIER 2 REACTIVE  : range ≤ 9 + AnimationPlayed fresh + facing (>0.5)
-        --                      → fallback buat fast attacks
+        -- REACTIVE DETECTION ONLY (preempt dropped — too many false positives saat killer chase/lewat):
+        --   Fire if: AnimationPlayed fresh in window (swing prep) + killer facing me (dot > threshold)
+        -- Trade-off: kadang lambat di fast attack, tapi gak waste 60s game cooldown di non-attack.
         local nowT = tick()
         local animFresh = (nowT - killerLastAnimTime) < CFG.parryAnimWindow
         -- Facing dot: 1.0 = killer hadap persis ke gw; 0 = sudut 90°; <0 = mbelakang
@@ -1653,17 +1663,14 @@ task.spawn(function()
             local lookFlat = Vector3.new(killerLook.X, 0, killerLook.Z).Unit
             facingDot = lookFlat:Dot(toMeFlat / mag)
         end
-        local preempt = (kd <= CFG.parryPreemptiveRange) and (facingDot > CFG.parryFacingDotPreempt)
-        local reactive = animFresh and (facingDot > CFG.parryFacingDot)
-        local fireMode = preempt and "PREEMPT" or (reactive and "REACT" or nil)
-        if not fireMode then
+        local facingMe = facingDot > CFG.parryFacingDot
+        if not (animFresh and facingMe) then
             dbgParry("dist=" .. string.format("%.1f", kd)
                 .. " anim=" .. tostring(animFresh)
-                .. " face=" .. string.format("%.2f", facingDot)
-                .. " (preempt-need: kd≤" .. CFG.parryPreemptiveRange .. " face>" .. CFG.parryFacingDotPreempt
-                .. " | react-need: anim+face>" .. CFG.parryFacingDot .. ")")
+                .. " face=" .. string.format("%.2f", facingDot) .. " (need anim+face>" .. CFG.parryFacingDot .. ")")
             continue
         end
+        local fireMode = "REACT"
         lastLogReason = ""
 
         -- FIRE RMB CLICK (instant, bukan hold — game treat parry sbg single-shot reactive action)
