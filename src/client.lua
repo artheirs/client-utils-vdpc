@@ -183,7 +183,7 @@ local CFG = {
     -- HYBRID detection: pre-emptive (close+facing) + reactive (anim-event backup)
     autoParryEnabled       = false,
     parryRange             = 9,     -- range relaxed lagi (whitelist anim ID udah selektif)
-    parryCooldown          = 62,    -- game cd: 60s fail / 90s success
+    parryCooldown          = 0.15,  -- SHIELD MODE: spam click tiap 150ms, gak respect game cd
     parryTick              = 0.04,
     parryFacingDot         = 0.5,   -- relaxed (anim ID whitelist udah very selective)
     parryAnimWindow        = 0.3,   -- catch wind-up + react time
@@ -1714,13 +1714,14 @@ task.spawn(function()
         -- Killer velocity (flat, abaikan jatuh/lompat)
         local kvel = killerHRP.AssemblyLinearVelocity
         local kspeedFlat = math.sqrt(kvel.X * kvel.X + kvel.Z * kvel.Z)
-        -- UNIVERSAL LMB PARRY trigger:
-        -- Anim watcher udah filter: Action priority + killer kd ≤ 5 at anim event time.
-        -- Loop ini cek: anim fresh + facing → fire (universal across semua killer).
-        -- DASH-detect tetep ada buat Abysswalker dash-slash yang anim event fires late.
+        -- SHIELD MODE — fire continuous saat killer close+facing, abaikan anim event.
+        -- Hipotesis: game cooldown cuma trigger saat parry SUKSES match attack window,
+        -- click di luar window = no-op. Universal across semua killer, gak butuh anim ID.
+        -- Risk: kalo each click consume cooldown = useless dalam 1 second.
+        local shieldDetect = (kd <= 6) and (facingDot > 0.6)
         local dashDetect = (kspeedFlat > 8) and (kd <= 5) and (facingDot > 0.85)
         local animDetect = animFresh and (facingDot > CFG.parryFacingDot)
-        local fireMode = animDetect and "REACT" or (dashDetect and "DASH" or nil)
+        local fireMode = shieldDetect and "SHIELD" or (animDetect and "REACT" or (dashDetect and "DASH" or nil))
         if not fireMode then
             dbgParry("dist=" .. string.format("%.1f", kd)
                 .. " spd=" .. string.format("%.1f", kspeedFlat)
