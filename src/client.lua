@@ -1605,14 +1605,25 @@ local function attachKillerAnimWatcher(p)
         hum.AnimationPlayed:Connect(function(track)
             local team = p.Team and p.Team.Name or ""
             if not team:lower():find("killer") then return end
-            -- WHITELIST anim ID — fire HANYA kalau ID match wind-up swing yang udah di-probe.
-            -- Format AnimationId: "rbxassetid://NUMBER" → ekstrak NUMBER aja.
             local anim = track and track.Animation
             if not anim then return end
             local id = (anim.AnimationId or ""):match("(%d+)")
-            if not id then return end
-            if not CFG.parryWindupAnimIds[id] then return end  -- bukan wind-up, ignore
-            killerLastAnimTime = tick()
+            -- LAYER 1: WHITELIST match (high confidence, dari probe)
+            if id and CFG.parryWindupAnimIds[id] then
+                killerLastAnimTime = tick()
+                return
+            end
+            -- LAYER 2: FALLBACK heuristic — Action priority + length 1.0-3.5s
+            -- (signature attack swing anim untuk killer yang belum di-probe).
+            local prio = track.Priority
+            local len  = track.Length or 0
+            local isActionPrio = (prio == Enum.AnimationPriority.Action
+                              or prio == Enum.AnimationPriority.Action2
+                              or prio == Enum.AnimationPriority.Action3
+                              or prio == Enum.AnimationPriority.Action4)
+            if isActionPrio and len >= 1.0 and len <= 3.5 then
+                killerLastAnimTime = tick()
+            end
         end)
     end
     if p.Character then attach(p.Character) end
