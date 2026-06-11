@@ -2491,6 +2491,18 @@ if LP.Character then attachAntiStun(LP.Character) end
 
 -- ── Heartbeat override aktif selama stun window (2s pasca-deteksi).
 -- Frequency 60Hz biar lebih cepat dari server replication tick (~30Hz).
+-- Helper: detect kalau killer lagi carry survivor (skip anti-stun → cegah crash).
+-- Common attribute names di Roblox horror games — kalau salah satu match, dianggap carrying.
+-- Carry mechanic biasanya pakai Weld/Anchor di HRP yang collide sama anti-stun override.
+local function isCarryingSurvivor(c)
+    if not c then return false end
+    -- Cek attribute candidates (akan ke-confirm via probe nanti)
+    for _, attrName in ipairs({"Carrying", "IsCarrying", "Carried", "InCarry", "HoldingSurvivor"}) do
+        if c:GetAttribute(attrName) then return true end
+    end
+    return false
+end
+
 RunService.Heartbeat:Connect(function()
     if tick() >= stunWindowUntil then return end
     if not antiStunActive() then return end
@@ -2499,6 +2511,9 @@ RunService.Heartbeat:Connect(function()
     if not h then return end
     local c = _lpChar or LP.Character
     if not c then return end
+    -- ⚠️ GUARD: skip total kalau lagi carry survivor.
+    -- Server transition state (carry + stun) collide sama override → crash.
+    if isCarryingSurvivor(c) then return end
     if c:GetAttribute("IsStunned") == true then
         pcall(function() c:SetAttribute("IsStunned", false) end)
     end
@@ -2509,11 +2524,8 @@ RunService.Heartbeat:Connect(function()
     if h.WalkSpeed > 0 and h.WalkSpeed < 12 then
         pcall(function() h.WalkSpeed = targetWalkSpeed() end)
     end
-    -- HRP Anchored defensive (kalau gun lock via Anchored)
-    local hrp = c:FindFirstChild("HumanoidRootPart")
-    if hrp and hrp.Anchored then
-        pcall(function() hrp.Anchored = false end)
-    end
+    -- NOTE: HRP Anchored override DI-HAPUS — bikin crash saat carry+stun
+    -- (carry mechanic pakai Anchored/Weld, override break physics parent chain).
     removeStunBodyMovers(c)
     local animator = getMyAnimator()
     if animator then
