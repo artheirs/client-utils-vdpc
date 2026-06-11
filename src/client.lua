@@ -2525,9 +2525,13 @@ RunService.Heartbeat:Connect(function()
     if not h then return end
     local c = _lpChar or LP.Character
     if not c then return end
-    -- ⚠️ GUARD: skip total kalau lagi carry survivor.
-    -- Server transition state (carry + stun) collide sama override → crash.
+    -- ⚠️ GUARD #1: skip total kalau lagi carry survivor.
     if isCarryingSurvivor(c) then return end
+    -- ⚠️ GUARD #2: skip kalau Knocked terdeteksi (gun scenario).
+    -- Knocked mungkin di-set SETELAH IsStunned (race condition), jadi check di
+    -- heartbeat lebih reliable dari check 1x di attribute handler. Heartbeat
+    -- override gun chain = crash; skip langsung saat Knocked muncul.
+    if c:GetAttribute("Knocked") == true then return end
     if c:GetAttribute("IsStunned") == true then
         pcall(function() c:SetAttribute("IsStunned", false) end)
     end
@@ -2555,6 +2559,11 @@ task.spawn(function()
         task.wait(CFG.antiStunTick)
         if not antiStunActive() then continue end
         if getRole() ~= "Killer" then continue end
+        local _c = _lpChar or LP.Character
+        if _c then
+            if isCarryingSurvivor(_c) then continue end
+            if _c:GetAttribute("Knocked") == true then continue end  -- skip gun scenario
+        end
         local hum = getMyHum()
         if hum then fixStunState(hum) end
     end
