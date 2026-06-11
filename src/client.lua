@@ -2378,45 +2378,136 @@ task.spawn(function()
     end
 end)
 
--- ── STEP 6.16: ANTI-FLASHLIGHT-BLIND (signal-based) ────────
--- Watch ChildAdded di Lighting/Camera/Character → instant disable + destroy
--- ColorCorrection/Blur/Bloom yang muncul sebagai blind effect.
+-- ── STEP 6.16: ANTI-FLASHLIGHT-BLIND (property-watch based) ────────
+-- Dari probe v2 (VD_antiblind_v2_probe.txt): blind effect = ImageLabel
+-- bernama "Flash" di Frame "Blind" di ScreenGui per-killer di PlayerGui.
+-- Path: Players.<me>.PlayerGui.<Killer>.Blind.Flash
+-- Game tween `ImageTransparency` dari 0 (opaque putih) naik ke 1.
+--
+-- Strategy:
+--   1. Identify object by Name match ("Flash" parent "Blind") atau parent "Blind"
+--   2. Force Visible=false + ImageTransparency=1
+--   3. Hook GetPropertyChangedSignal → tiap game tween-back, override lagi
+-- Legacy: tetap kill PostProcessEffect (ColorCorrection/Blur/Bloom) di Lighting/Camera
+-- buat killer/skin lain yang mungkin pakai cara lama.
 local Lighting = game:GetService("Lighting")
 
-local function killBlindEffect(ef)
+-- ── Legacy PostProcessEffect killer (defensive, kalau ada killer yg pake cara lama)
+local function killPostEffect(ef)
     if not CFG.antiFlashlightEnabled then return end
     if getRole() ~= "Killer" then return end
     if ef:IsA("ColorCorrectionEffect") or ef:IsA("BlurEffect") or ef:IsA("BloomEffect") then
         pcall(function() ef.Enabled = false end)
-        -- Destroy supaya server ga reapply
         pcall(function() ef:Destroy() end)
     end
 end
 
-local function watchContainer(container)
+local function watchEffectContainer(container)
     if not container then return end
-    container.ChildAdded:Connect(function(c) killBlindEffect(c) end)
-    -- Scan existing
-    for _, c in ipairs(container:GetChildren()) do killBlindEffect(c) end
+    container.ChildAdded:Connect(function(c) killPostEffect(c) end)
+    for _, c in ipairs(container:GetChildren()) do killPostEffect(c) end
 end
 
-watchContainer(Lighting)
-if workspace.CurrentCamera then watchContainer(workspace.CurrentCamera) end
+watchEffectContainer(Lighting)
+if workspace.CurrentCamera then watchEffectContainer(workspace.CurrentCamera) end
 workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
-    watchContainer(workspace.CurrentCamera)
+    watchEffectContainer(workspace.CurrentCamera)
 end)
-LP.CharacterAdded:Connect(function(c) task.wait(0.2); watchContainer(c) end)
-if LP.Character then watchContainer(LP.Character) end
 
--- Backup polling at 0.1s — kalau effect masuk via cara lain
+-- ── NEW: PlayerGui Flash/Blind ImageLabel killer (main mechanism)
+local neutralizedBlind = setmetatable({}, {__mode = "k"})
+
+local function isBlindObject(obj)
+    if not obj or not obj.Parent then return false end
+    local oname = obj.Name:lower()
+    local pname = obj.Parent.Name:lower()
+    -- ImageLabel bernama Flash di parent Blind
+    if (obj:IsA("ImageLabel") or obj:IsA("ImageButton") or obj:IsA("Frame"))
+        and oname == "flash" and pname == "blind" then
+        return true
+    end
+    -- Frame/Group bernama Blind langsung
+    if obj:IsA("Frame") and oname == "blind" then return true end
+    return false
+end
+
+local function neutralizeBlind(obj)
+    if not CFG.antiFlashlightEnabled then return end
+    if getRole() ~= "Killer" then return end
+    if neutralizedBlind[obj] then return end
+    neutralizedBlind[obj] = true
+
+    pcall(function() obj.Visible = false end)
+    if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
+        pcall(function() obj.ImageTransparency = 1 end)
+    end
+    pcall(function() obj.BackgroundTransparency = 1 end)
+
+    -- Hook property changes — game bakal tween-back, kita override tiap kali
+    pcall(function()
+        obj:GetPropertyChangedSignal("Visible"):Connect(function()
+            if CFG.antiFlashlightEnabled and getRole() == "Killer" and obj.Visible then
+                pcall(function() obj.Visible = false end)
+            end
+        end)
+    end)
+    if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
+        pcall(function()
+            obj:GetPropertyChangedSignal("ImageTransparency"):Connect(function()
+                if CFG.antiFlashlightEnabled and getRole() == "Killer" and obj.ImageTransparency < 1 then
+                    pcall(function() obj.ImageTransparency = 1 end)
+                end
+            end)
+        end)
+    end
+    pcall(function()
+        obj:GetPropertyChangedSignal("BackgroundTransparency"):Connect(function()
+            if CFG.antiFlashlightEnabled and getRole() == "Killer" and obj.BackgroundTransparency < 1 then
+                pcall(function() obj.BackgroundTransparency = 1 end)
+            end
+        end)
+    end)
+end
+
+local function scanPlayerGui(pg)
+    if not pg then return end
+    -- Existing descendants
+    for _, d in ipairs(pg:GetDescendants()) do
+        if isBlindObject(d) then neutralizeBlind(d) end
+    end
+    -- New descendants (kalau ScreenGui per-killer di-load late atau ganti killer)
+    pg.DescendantAdded:Connect(function(d)
+        if isBlindObject(d) then
+            task.wait()  -- biar property awal udah ke-set sebelum kita override
+            neutralizeBlind(d)
+        end
+    end)
+end
+
+local pgInit = LP:FindFirstChildOfClass("PlayerGui")
+if pgInit then scanPlayerGui(pgInit) end
+LP.ChildAdded:Connect(function(c)
+    if c:IsA("PlayerGui") then scanPlayerGui(c) end
+end)
+
+-- Backup polling — kalau hook miss (object replaced, etc)
 task.spawn(function()
     while true do
-        task.wait(0.1)
+        task.wait(0.2)
         if not CFG.antiFlashlightEnabled then continue end
         if getRole() ~= "Killer" then continue end
+        local pg = LP:FindFirstChildOfClass("PlayerGui")
+        if pg then
+            for _, d in ipairs(pg:GetDescendants()) do
+                if isBlindObject(d) and not neutralizedBlind[d] then
+                    neutralizeBlind(d)
+                end
+            end
+        end
+        -- Legacy PostEffect sweep
         for _, container in ipairs({Lighting, workspace.CurrentCamera, LP.Character}) do
             if container then
-                for _, ef in ipairs(container:GetChildren()) do killBlindEffect(ef) end
+                for _, ef in ipairs(container:GetChildren()) do killPostEffect(ef) end
             end
         end
     end
