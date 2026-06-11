@@ -14,6 +14,6 @@
 
 return {
     8961991252,   -- Cio (owner)
-    -- 1234567890, -- contoh: Teman A (YYYY-MM-DD)
+    11083773420, -- Teman
     -- 9876543210, -- contoh: Teman B (YYYY-MM-DD)
 }
